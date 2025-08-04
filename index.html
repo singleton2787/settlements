@@ -68,7 +68,7 @@
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const text = await page.getTextContent();
-        textContent += text.items.map(item => item.str).join(' ') + '\n';
+        textContent += text.items.map(item => item.str).join(' ').replace(/\s+/g, ' ') + '\n';
       }
       analyzeText(textContent);
     }
@@ -77,10 +77,10 @@
       const summaryEl = document.getElementById('summary');
       const tripTable = document.getElementById('trip-table');
 
-      const netMatch = text.match(/Net Earnings \$(\d+\.\d+)/);
-      const milesMatch = text.match(/Mileage — (\d+)/);
-      const grossMatch = text.match(/Total Gross Taxable Earnings \$(\d+\.\d+)/);
-      const reimburseMatch = text.match(/Total Reimbursements \$(\d+\.\d+)/);
+      const netMatch = text.match(/Net Earnings[^\d]*\$(\d+\.\d+)/);
+      const milesMatch = text.match(/Mileage[^\d]*(\d+)/);
+      const grossMatch = text.match(/Total Gross Taxable Earnings[^\d]*\$(\d+\.\d+)/);
+      const reimburseMatch = text.match(/Total Reimbursements[^\d]*\$(\d+\.\d+)/);
 
       summaryEl.innerHTML = `
         <p><strong>Net Earnings:</strong> $${netMatch ? netMatch[1] : 'N/A'}</p>
