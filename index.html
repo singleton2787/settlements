@@ -4,10 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Truck Settlement Analyzer</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -99,8 +98,16 @@
   </div>
 
   <script>
-    // Configure PDF.js worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    // Configure PDF.js worker - suppress worker warnings
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    }
+
+    // Wait for all scripts to load before initializing
+    window.addEventListener('load', function() {
+      console.log('Chart.js loaded:', typeof Chart !== 'undefined');
+      console.log('PDF.js loaded:', typeof pdfjsLib !== 'undefined');
+    });
 
     // Global variables to store data (replacing localStorage)
     let settlementData = null;
@@ -283,6 +290,19 @@
     }
 
     function renderChart(trips) {
+      // Check if Chart.js is available
+      if (typeof Chart === 'undefined') {
+        console.error('Chart.js is not loaded');
+        const canvas = document.getElementById('earningsChart');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#ef4444';
+        ctx.textAlign = 'center';
+        ctx.fillText('Chart library failed to load', canvas.width / 2, canvas.height / 2);
+        return;
+      }
+
       const ctx = document.getElementById('earningsChart').getContext('2d');
       
       if (chartInstance) {
@@ -298,46 +318,99 @@
         return;
       }
 
-      chartInstance = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: trips.map(t => `Trip ${t.trip}`),
-          datasets: [{
-            label: 'Trip Earnings ($)',
-            data: trips.map(t => t.amount),
-            backgroundColor: '#3b82f6',
-            borderColor: '#1d4ed8',
-            borderWidth: 1,
-            borderRadius: 4
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              display: false
-            },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  return `$${context.parsed.y.toFixed(2)}`;
+      try {
+        chartInstance = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: trips.map(t => `Trip ${t.trip}`),
+            datasets: [{
+              label: 'Trip Earnings ($)',
+              data: trips.map(t => t.amount),
+              backgroundColor: '#3b82f6',
+              borderColor: '#1d4ed8',
+              borderWidth: 1,
+              borderRadius: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: false
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    return `${context.parsed.y.toFixed(2)}`;
+                  }
                 }
               }
-            }
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: {
-                callback: function(value) {
-                  return '$' + value.toFixed(0);
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: function(value) {
+                    return '
+
+    function exportCSV() {
+      if (!settlementData) {
+        showMessage('No data to export. Please upload a PDF first.', 'error');
+        return;
+      }
+
+      try {
+        const csvRows = [
+          'Trip,Dates,Amount,Details'
+        ];
+
+        settlementData.trips.forEach(trip => {
+          const row = [
+            trip.trip,
+            `"${trip.dates}"`,
+            trip.amount.toFixed(2),
+            `"${trip.details.replace(/"/g, '""')}"`
+          ];
+          csvRows.push(row.join(','));
+        });
+
+        // Add summary row
+        csvRows.push('');
+        csvRows.push('Summary');
+        if (settlementData.summary.netEarnings) csvRows.push(`Net Earnings,${settlementData.summary.netEarnings.toFixed(2)}`);
+        if (settlementData.summary.grossEarnings) csvRows.push(`Gross Earnings,${settlementData.summary.grossEarnings.toFixed(2)}`);
+        if (settlementData.summary.miles) csvRows.push(`Miles,${settlementData.summary.miles}`);
+        if (settlementData.summary.reimbursements) csvRows.push(`Reimbursements,${settlementData.summary.reimbursements.toFixed(2)}`);
+
+        const csv = csvRows.join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const fileName = `settlement_${new Date().toISOString().split('T')[0]}.csv`;
+        saveAs(blob, fileName);
+        
+        showMessage('CSV exported successfully!', 'success');
+      } catch (error) {
+        console.error('Error exporting CSV:', error);
+        showMessage('Error exporting CSV file.', 'error');
+      }
+    }
+  </script>
+</body>
+</html> + value.toFixed(0);
+                  }
                 }
               }
             }
           }
-        }
-      });
+        });
+      } catch (error) {
+        console.error('Error creating chart:', error);
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#ef4444';
+        ctx.textAlign = 'center';
+        ctx.fillText('Chart creation failed', ctx.canvas.width / 2, ctx.canvas.height / 2);
+      }
     }
 
     function exportCSV() {
