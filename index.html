@@ -269,7 +269,12 @@
         const totalTaxes = taxesMatch ? parseFloat(taxesMatch[1].replace(/[(),]/g, '')) : null;
         const netEarnings = netMatch ? parseFloat(netMatch[1].replace(/,/g, '')) : null;
 
-        const ratePerMile = (netEarnings && miles) ? (netEarnings / miles) : null;
+        if (ratePerMile) {
+  ratePerMileFormatted = '$' + ratePerMile.toFixed(3);
+} else {
+  ratePerMileFormatted = 'N/A';
+}
+
 
         // Validation: calculate expected net and compare
 
