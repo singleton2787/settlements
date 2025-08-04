@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Truck Settlement Analyzer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 font-sans">
+  <div class="max-w-4xl mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Truck Settlement Analyzer</h1>
+    <input type="file" id="file-input" accept="application/pdf" class="mb-4">
+    <button onclick="exportCSV()" class="bg-blue-600 text-white px-4 py-2 rounded">Export CSV</button>
+
+    <div class="mt-6">
+      <h2 class="text-xl font-semibold">Summary</h2>
+      <div id="summary" class="bg-white p-4 rounded shadow mt-2"></div>
+    </div>
+
+    <div class="mt-6">
+      <h2 class="text-xl font-semibold">Charts</h2>
+      <canvas id="earningsChart" class="my-4"></canvas>
+    </div>
+
+    <div class="mt-6">
+      <h2 class="text-xl font-semibold">Trip Breakdown</h2>
+      <table class="min-w-full bg-white rounded shadow">
+        <thead>
+          <tr class="bg-gray-200 text-left">
+            <th class="p-2">Trip #</th>
+            <th class="p-2">Dates</th>
+            <th class="p-2">Amount</th>
+            <th class="p-2">Details</th>
+          </tr>
+        </thead>
+        <tbody id="trip-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('file-input');
+    fileInput.addEventListener('change', handleFile);
+
+    async function handleFile(event) {
+      const file = event.target.files[0];
+      const pdf = await pdfjsLib.getDocument(URL.createObjectURL(file)).promise;
+      let textContent = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const text = await page.getTextContent();
+        textContent += text.items.map(item => item.str).join(' ') + '\n';
+      }
+      analyzeText(textContent);
+    }
+
+    function analyzeText(text) {
+      const summaryEl = document.getElementById('summary');
+      const tripTable = document.getElementById('trip-table');
+
+      const netMatch = text.match(/Net Earnings \$(\d+\.\d+)/);
+      const milesMatch = text.match(/Mileage — (\d+)/);
+      const grossMatch = text.match(/Total Gross Taxable Earnings \$(\d+\.\d+)/);
+      const reimburseMatch = text.match(/Total Reimbursements \$(\d+\.\d+)/);
+
+      summaryEl.innerHTML = `
+        <p><strong>Net Earnings:</strong> $${netMatch ? netMatch[1] : 'N/A'}</p>
+        <p><strong>Gross Taxable Earnings:</strong> $${grossMatch ? grossMatch[1] : 'N/A'}</p>
+        <p><strong>Miles Driven:</strong> ${milesMatch ? milesMatch[1] : 'N/A'} mi</p>
+        <p><strong>Reimbursements:</strong> $${reimburseMatch ? reimburseMatch[1] : 'N/A'}</p>
+      `;
+
+      const trips = [...text.matchAll(/(\d{7}): ([A-Z]{3} \d{2} - [A-Z]{3} \d{2})(.*?)Total \$(\d+\.\d+)/gs)];
+      const tripData = [];
+
+      tripTable.innerHTML = trips.map(trip => {
+        tripData.push({
+          trip: trip[1],
+          dates: trip[2],
+          amount: parseFloat(trip[4]),
+          details: trip[3].trim().replace(/ +/g, ' ')
+        });
+        return `<tr>
+          <td class="p-2">${trip[1]}</td>
+          <td class="p-2">${trip[2]}</td>
+          <td class="p-2">$${trip[4]}</td>
+          <td class="p-2 text-sm">${trip[3].trim().replace(/ +/g, ' ')}</td>
+        </tr>`;
+      }).join('');
+
+      renderChart(tripData);
+      localStorage.setItem('truck-settlement', JSON.stringify({ summary: summaryEl.innerHTML, trips: tripData }));
+    }
+
+    function renderChart(trips) {
+      const ctx = document.getElementById('earningsChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: trips.map(t => t.trip),
+          datasets: [{
+            label: 'Trip Amounts',
+            data: trips.map(t => t.amount),
+            backgroundColor: '#3b82f6'
+          }]
+        }
+      });
+    }
+
+    function exportCSV() {
+      const data = JSON.parse(localStorage.getItem('truck-settlement'));
+      if (!data) return;
+      const csv = [
+        'Trip,Dates,Amount,Details',
+        ...data.trips.map(t => `${t.trip},${t.dates},${t.amount},"${t.details.replace(/"/g, '""')}"`)
+      ].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      saveAs(blob, 'settlement.csv');
+    }
+  </script>
+</body>
+</html>
