@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Truck Driver Pay Settlement Analyzer</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
@@ -83,6 +83,9 @@
 
     <!-- Status Messages -->
     <div id="status-message" class="hidden p-3 rounded mb-4"></div>
+
+    <!-- Validation Status -->
+    <div id="validation-status" class="mb-4"></div>
 
     <div class="bg-white p-6 rounded-lg shadow-md mb-6">
       <label for="file-input" class="block text-sm font-medium text-gray-700 mb-2">Upload Pay Settlement PDF</label>
@@ -173,6 +176,7 @@
     const fileInput = document.getElementById('file-input');
     const statusMessage = document.getElementById('status-message');
     const exportBtn = document.getElementById('export-btn');
+    const validationStatus = document.getElementById('validation-status');
 
     // Event listeners
     fileInput.addEventListener('change', handleFile);
@@ -183,7 +187,7 @@
       statusMessage.classList.remove('hidden');
 
       if (type === 'success') {
-        setTimeout(function() {
+        setTimeout(function () {
           statusMessage.classList.add('hidden');
         }, 5000);
       }
@@ -211,7 +215,7 @@
           try {
             const page = await pdf.getPage(i);
             const text = await page.getTextContent();
-            const pageText = text.items.map(function(item) { return item.str; }).join(' ').replace(/\s+/g, ' ') + '\n';
+            const pageText = text.items.map(function (item) { return item.str; }).join(' ').replace(/\s+/g, ' ') + '\n';
             textContent += pageText;
           } catch (pageError) {
             console.warn('Error processing page ' + i + ':', pageError);
@@ -238,22 +242,18 @@
         const quickStatsEl = document.getElementById('quick-stats');
         const tripTable = document.getElementById('trip-table');
 
-        // Extract main financial numbers using more robust and direct patterns.
+        // Extract amounts using regex patterns
 
-        // Matches lines like: Total Gross Taxable Earnings $690.42
         const grossMatch = text.match(/Total Gross Taxable Earnings[^\d$-]*\$?([-.\d,]+)/i);
         const nonTaxableMatch = text.match(/Non-Taxable Earnings[^\d$-]*\$?([-.\d,]+)/i);
         const reimburseMatch = text.match(/Total Reimbursements[^\d$-]*\$?([-.\d,]+)/i);
 
-        // Matches: Total Deductions ($56.04)
         const deductionsMatch = text.match(/Total Deductions[^\d$-]*\(?\$?([-.\d,]+)\)?/i);
-        // Matches: Net Earnings $968.77
         const netMatch = text.match(/Net Earnings[^\d$-]*\$?([-.\d,]+)/i);
-        // Matches: Total Taxes ($52.81)
         const taxesMatch = text.match(/Total Taxes[^\d$-]*\(?\$?([-.\d,]+)\)?/i);
-        // Matches: miles (look for mileage row or EARNINGS table)
+
         let miles = null;
-        const mileageRow = text.match(/\*?Mileage\s+—\s+(\d{1,6})\s+\$?([.\d]+)/i)
+        const mileageRow = text.match(/\*?Mileage\s+—\s+(\d{1,6})\s+\$?([.\d]+)/i);
         if (mileageRow) {
           miles = parseInt(mileageRow[1].replace(/,/g, ''), 10);
         } else {
@@ -262,7 +262,6 @@
             miles = parseInt(milesMatch[1].replace(/,/g, ''), 10);
         }
 
-        // Convert extracted matches
         const grossEarnings = grossMatch ? parseFloat(grossMatch[1].replace(/,/g, '')) : null;
         const nonTaxable = nonTaxableMatch ? parseFloat(nonTaxableMatch[1].replace(/,/g, '')) : 0;
         const reimbursements = reimburseMatch ? parseFloat(reimburseMatch[1].replace(/,/g, '')) : 0;
@@ -270,10 +269,41 @@
         const totalTaxes = taxesMatch ? parseFloat(taxesMatch[1].replace(/[(),]/g, '')) : null;
         const netEarnings = netMatch ? parseFloat(netMatch[1].replace(/,/g, '')) : null;
 
-        // Calculate rate per mile only if we have miles and net
         const ratePerMile = (netEarnings && miles) ? (netEarnings / miles) : null;
 
-        // Build summary
+        // Validation: calculate expected net and compare
+
+        let validationStatusText = '';
+        let validationStatusClass = '';
+
+        if (
+          grossEarnings !== null &&
+          totalDeductions !== null &&
+          totalTaxes !== null &&
+          netEarnings !== null
+        ) {
+          const netCalc = grossEarnings + nonTaxable + reimbursements - totalDeductions - totalTaxes;
+          const diff = Math.abs(netCalc - netEarnings);
+
+          if (diff < 0.01) {
+            validationStatusText = '✅ All Clear: Settlement math is consistent.';
+            validationStatusClass = 'p-4 rounded bg-green-50 border border-green-200 text-green-700 font-semibold';
+          } else if (diff < 2) {
+            validationStatusText = `⚠️ Warning: Net earnings differ from calculated total by $${diff.toFixed(2)}. Check for small rounding or overrides.`;
+            validationStatusClass = 'p-4 rounded bg-yellow-50 border border-yellow-200 text-yellow-700 font-semibold';
+          } else {
+            validationStatusText = `❌ ERROR: Net earnings differ from calculated total by $${diff.toFixed(2)}. There is a significant mismatch!`;
+            validationStatusClass = 'p-4 rounded bg-red-50 border border-red-200 text-red-700 font-semibold';
+          }
+        } else {
+          validationStatusText = '⚠️ Warning: Incomplete data for settlement validation.';
+          validationStatusClass = 'p-4 rounded bg-yellow-50 border border-yellow-200 text-yellow-700 font-semibold';
+        }
+
+        validationStatus.innerHTML = validationStatusText;
+        validationStatus.className = validationStatusClass;
+
+        // Summary display
         let summaryHTML = '<div class="space-y-2">';
         summaryHTML += '<p><strong><span class="tooltip">Net Earnings<span class="tooltiptext">Your actual take-home pay after all deductions (taxes, insurance, etc.).</span></span>:</strong> ' + (netEarnings ? '$' + netEarnings.toFixed(2) : 'N/A') + '</p>';
         summaryHTML += '<p><strong><span class="tooltip">Gross Taxable Earnings<span class="tooltiptext">Your total taxable pay before any deductions.</span></span>:</strong> ' + (grossEarnings ? '$' + grossEarnings.toFixed(2) : 'N/A') + '</p>';
@@ -283,19 +313,19 @@
         summaryHTML += '</div>';
         summaryEl.innerHTML = summaryHTML;
 
-        // Analysis: show deductions, taxes, gross, etc. from parsed (not calculated!) values.
+        // Stats display
         let statsHTML = '<div class="space-y-2">';
         statsHTML += '<p><strong><span class="tooltip">Rate per Mile<span class="tooltiptext">Approximate take-home per mile driven.</span></span>:</strong> ' + (ratePerMile ? '$' + ratePerMile.toFixed(3) : 'N/A') + '</p>';
         statsHTML += '<p><strong><span class="tooltip">Total Deductions<span class="tooltiptext">All company/benefit deductions (not taxes).</span></span>:</strong> ' + (totalDeductions !== null ? '$' + totalDeductions.toFixed(2) : 'N/A') + '</p>';
         statsHTML += '<p><strong><span class="tooltip">Total Taxes<span class="tooltiptext">All payroll taxes withheld.</span></span>:</strong> ' + (totalTaxes !== null ? '$' + totalTaxes.toFixed(2) : 'N/A') + '</p>';
         statsHTML += '<p><strong><span class="tooltip">Deduction Rate<span class="tooltiptext">Percentage of gross taken by company deductions (not taxes).</span></span>:</strong> ' +
-          (grossEarnings && totalDeductions !== null ? ((totalDeductions/grossEarnings)*100).toFixed(1) + '%' : 'N/A') + '</p>';
+          (grossEarnings && totalDeductions !== null ? ((totalDeductions / grossEarnings) * 100).toFixed(1) + '%' : 'N/A') + '</p>';
         statsHTML += '<p><strong><span class="tooltip">Tax Rate<span class="tooltiptext">Percent of gross taken by taxes.</span></span>:</strong> ' +
-          (grossEarnings && totalTaxes !== null ? ((totalTaxes/grossEarnings)*100).toFixed(1) + '%' : 'N/A') + '</p>';
+          (grossEarnings && totalTaxes !== null ? ((totalTaxes / grossEarnings) * 100).toFixed(1) + '%' : 'N/A') + '</p>';
         statsHTML += '</div>';
         quickStatsEl.innerHTML = statsHTML;
 
-        // Find trips using table patterns (based on your PDF's format)
+        // Trips parse
         const tripPatterns = [
           /(\d{6,8}):\s*([A-Z]{3}\s+\d{1,2}\s*-\s*[A-Z]{3}\s*\d{1,2})([\s\S]*?)Total\s*\$?([-\d.,]+)/gis
         ];
@@ -382,10 +412,10 @@
         chartInstance = new Chart(ctx, {
           type: 'bar',
           data: {
-            labels: trips.map(function(t) { return 'Trip ' + t.trip; }),
+            labels: trips.map(function (t) { return 'Trip ' + t.trip; }),
             datasets: [{
               label: 'Trip Earnings ($)',
-              data: trips.map(function(t) { return t.amount; }),
+              data: trips.map(function (t) { return t.amount; }),
               backgroundColor: '#3b82f6',
               borderColor: '#1d4ed8',
               borderWidth: 1,
@@ -399,7 +429,7 @@
               legend: { display: false },
               tooltip: {
                 callbacks: {
-                  label: function(context) {
+                  label: function (context) {
                     return '$' + context.parsed.y.toFixed(2);
                   }
                 }
@@ -409,7 +439,7 @@
               y: {
                 beginAtZero: true,
                 ticks: {
-                  callback: function(value) {
+                  callback: function (value) {
                     return '$' + value.toFixed(0);
                   }
                 }
