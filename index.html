@@ -181,7 +181,7 @@
       statusMessage.textContent = message;
       statusMessage.className = 'p-3 rounded mb-4 ' + (type === 'error' ? 'error-message' : 'success-message');
       statusMessage.classList.remove('hidden');
-      
+
       if (type === 'success') {
         setTimeout(function() {
           statusMessage.classList.add('hidden');
@@ -191,10 +191,8 @@
 
     async function handleFile(event) {
       const file = event.target.files[0];
-      
-      if (!file) {
-        return;
-      }
+
+      if (!file) return;
 
       if (file.type !== 'application/pdf') {
         showMessage('Please select a valid PDF file.', 'error');
@@ -203,12 +201,12 @@
 
       try {
         showMessage('Processing PDF...', 'success');
-        
+
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-        
+
         let textContent = '';
-        
+
         for (let i = 1; i <= pdf.numPages; i++) {
           try {
             const page = await pdf.getPage(i);
@@ -227,7 +225,7 @@
 
         analyzeText(textContent);
         showMessage('PDF processed successfully!', 'success');
-        
+
       } catch (error) {
         console.error('Error processing PDF:', error);
         showMessage('Error processing PDF file. Please ensure it is a valid settlement document.', 'error');
@@ -240,42 +238,66 @@
         const quickStatsEl = document.getElementById('quick-stats');
         const tripTable = document.getElementById('trip-table');
 
-        // Extract data with flexible patterns for driver pay settlements
-        const netMatch = text.match(/(?:Net Earnings?|Net Pay|Net Amount|Take Home)[^\d$]*\$?(\d+[,.]?\d*\.?\d+)/i);
-        const milesMatch = text.match(/(?:Mileage|Miles?|Total Miles)[^\d]*(\d+[,.]?\d*)/i);
-        const grossMatch = text.match(/(?:Total Gross|Gross Taxable|Gross Earnings?|Gross Pay)[^\d$]*\$?(\d+[,.]?\d*\.?\d+)/i);
-        const reimburseMatch = text.match(/(?:Total Reimbursements?|Reimbursed|Advances)[^\d$]*\$?(\d+[,.]?\d*\.?\d+)/i);
+        // Extract main financial numbers using more robust and direct patterns.
 
-        const netEarnings = netMatch ? parseFloat(netMatch[1].replace(/,/g, '')) : null;
+        // Matches lines like: Total Gross Taxable Earnings $690.42
+        const grossMatch = text.match(/Total Gross Taxable Earnings[^\d$-]*\$?([-.\d,]+)/i);
+        const nonTaxableMatch = text.match(/Non-Taxable Earnings[^\d$-]*\$?([-.\d,]+)/i);
+        const reimburseMatch = text.match(/Total Reimbursements[^\d$-]*\$?([-.\d,]+)/i);
+
+        // Matches: Total Deductions ($56.04)
+        const deductionsMatch = text.match(/Total Deductions[^\d$-]*\(?\$?([-.\d,]+)\)?/i);
+        // Matches: Net Earnings $968.77
+        const netMatch = text.match(/Net Earnings[^\d$-]*\$?([-.\d,]+)/i);
+        // Matches: Total Taxes ($52.81)
+        const taxesMatch = text.match(/Total Taxes[^\d$-]*\(?\$?([-.\d,]+)\)?/i);
+        // Matches: miles (look for mileage row or EARNINGS table)
+        let miles = null;
+        const mileageRow = text.match(/\*?Mileage\s+—\s+(\d{1,6})\s+\$?([.\d]+)/i)
+        if (mileageRow) {
+          miles = parseInt(mileageRow[1].replace(/,/g, ''), 10);
+        } else {
+          const milesMatch = text.match(/(?:Mileage|Miles|Total Miles)[^\d]*(\d{1,6})/i);
+          if (milesMatch)
+            miles = parseInt(milesMatch[1].replace(/,/g, ''), 10);
+        }
+
+        // Convert extracted matches
         const grossEarnings = grossMatch ? parseFloat(grossMatch[1].replace(/,/g, '')) : null;
-        const miles = milesMatch ? parseInt(milesMatch[1].replace(/,/g, '')) : null;
-        const reimbursements = reimburseMatch ? parseFloat(reimburseMatch[1].replace(/,/g, '')) : null;
+        const nonTaxable = nonTaxableMatch ? parseFloat(nonTaxableMatch[1].replace(/,/g, '')) : 0;
+        const reimbursements = reimburseMatch ? parseFloat(reimburseMatch[1].replace(/,/g, '')) : 0;
+        const totalDeductions = deductionsMatch ? parseFloat(deductionsMatch[1].replace(/[(),]/g, '')) : null;
+        const totalTaxes = taxesMatch ? parseFloat(taxesMatch[1].replace(/[(),]/g, '')) : null;
+        const netEarnings = netMatch ? parseFloat(netMatch[1].replace(/,/g, '')) : null;
 
-        // Build summary HTML with tooltips
+        // Calculate rate per mile only if we have miles and net
+        const ratePerMile = (netEarnings && miles) ? (netEarnings / miles) : null;
+
+        // Build summary
         let summaryHTML = '<div class="space-y-2">';
-        summaryHTML += '<p><strong><span class="tooltip">Net Earnings<span class="tooltiptext">Your actual take-home pay after all deductions (taxes, insurance, truck payments, etc.). This is what goes in your pocket.</span></span>:</strong> ' + (netEarnings ? '$' + netEarnings.toFixed(2) : 'N/A') + '</p>';
-        summaryHTML += '<p><strong><span class="tooltip">Gross Taxable Earnings<span class="tooltiptext">Your total pay before any deductions. This is what the company pays you before taxes and other costs are taken out.</span></span>:</strong> ' + (grossEarnings ? '$' + grossEarnings.toFixed(2) : 'N/A') + '</p>';
-        summaryHTML += '<p><strong><span class="tooltip">Miles Driven<span class="tooltiptext">Total miles you drove for all trips in this settlement period. Used to calculate your rate per mile.</span></span>:</strong> ' + (miles ? miles.toLocaleString() + ' mi' : 'N/A') + '</p>';
-        summaryHTML += '<p><strong><span class="tooltip">Reimbursements<span class="tooltiptext">Money the company pays you back for expenses like fuel, tolls, permits, or other out-of-pocket costs you paid while driving.</span></span>:</strong> ' + (reimbursements ? '$' + reimbursements.toFixed(2) : 'N/A') + '</p>';
+        summaryHTML += '<p><strong><span class="tooltip">Net Earnings<span class="tooltiptext">Your actual take-home pay after all deductions (taxes, insurance, etc.).</span></span>:</strong> ' + (netEarnings ? '$' + netEarnings.toFixed(2) : 'N/A') + '</p>';
+        summaryHTML += '<p><strong><span class="tooltip">Gross Taxable Earnings<span class="tooltiptext">Your total taxable pay before any deductions.</span></span>:</strong> ' + (grossEarnings ? '$' + grossEarnings.toFixed(2) : 'N/A') + '</p>';
+        summaryHTML += '<p><strong><span class="tooltip">Non-Taxable (Per Diem)<span class="tooltiptext">Per diem/meal/exempt amount.</span></span>:</strong> ' + (nonTaxable ? '$' + nonTaxable.toFixed(2) : '$0.00') + '</p>';
+        summaryHTML += '<p><strong><span class="tooltip">Miles Driven<span class="tooltiptext">Total paid miles in this period.</span></span>:</strong> ' + (miles ? miles.toLocaleString() + ' mi' : 'N/A') + '</p>';
+        summaryHTML += '<p><strong><span class="tooltip">Reimbursements<span class="tooltiptext">Money reimbursed for work expenses.</span></span>:</strong> ' + (reimbursements ? '$' + reimbursements.toFixed(2) : '$0.00') + '</p>';
         summaryHTML += '</div>';
         summaryEl.innerHTML = summaryHTML;
 
-        const ratePerMile = (netEarnings && miles) ? (netEarnings / miles) : null;
-        const deductions = (grossEarnings && netEarnings) ? (grossEarnings - netEarnings) : null;
-
-        // Build stats HTML with tooltips
+        // Analysis: show deductions, taxes, gross, etc. from parsed (not calculated!) values.
         let statsHTML = '<div class="space-y-2">';
-        statsHTML += '<p><strong><span class="tooltip">Rate per Mile<span class="tooltiptext">How much you earn per mile driven (CPM = Cents Per Mile). Industry average is $0.40-$0.65 per mile. Higher is better!</span></span>:</strong> ' + (ratePerMile ? '$' + ratePerMile.toFixed(3) : 'N/A') + '</p>';
-        statsHTML += '<p><strong><span class="tooltip">Total Deductions<span class="tooltiptext">Everything taken out of your gross pay: taxes, insurance, truck payments, maintenance funds, etc. The difference between gross and net pay.</span></span>:</strong> ' + (deductions ? '$' + deductions.toFixed(2) : 'N/A') + '</p>';
-        statsHTML += '<p><strong><span class="tooltip">Deduction Rate<span class="tooltiptext">What percentage of your gross pay goes to deductions. Typical range is 25-40%. Lower percentages mean you keep more of your earnings.</span></span>:</strong> ' + ((grossEarnings && deductions) ? ((deductions/grossEarnings)*100).toFixed(1) + '%' : 'N/A') + '</p>';
+        statsHTML += '<p><strong><span class="tooltip">Rate per Mile<span class="tooltiptext">Approximate take-home per mile driven.</span></span>:</strong> ' + (ratePerMile ? '$' + ratePerMile.toFixed(3) : 'N/A') + '</p>';
+        statsHTML += '<p><strong><span class="tooltip">Total Deductions<span class="tooltiptext">All company/benefit deductions (not taxes).</span></span>:</strong> ' + (totalDeductions !== null ? '$' + totalDeductions.toFixed(2) : 'N/A') + '</p>';
+        statsHTML += '<p><strong><span class="tooltip">Total Taxes<span class="tooltiptext">All payroll taxes withheld.</span></span>:</strong> ' + (totalTaxes !== null ? '$' + totalTaxes.toFixed(2) : 'N/A') + '</p>';
+        statsHTML += '<p><strong><span class="tooltip">Deduction Rate<span class="tooltiptext">Percentage of gross taken by company deductions (not taxes).</span></span>:</strong> ' +
+          (grossEarnings && totalDeductions !== null ? ((totalDeductions/grossEarnings)*100).toFixed(1) + '%' : 'N/A') + '</p>';
+        statsHTML += '<p><strong><span class="tooltip">Tax Rate<span class="tooltiptext">Percent of gross taken by taxes.</span></span>:</strong> ' +
+          (grossEarnings && totalTaxes !== null ? ((totalTaxes/grossEarnings)*100).toFixed(1) + '%' : 'N/A') + '</p>';
         statsHTML += '</div>';
         quickStatsEl.innerHTML = statsHTML;
 
-        // Find trips with multiple patterns
+        // Find trips using table patterns (based on your PDF's format)
         const tripPatterns = [
-          /(\d{6,8}):?\s*([A-Z]{3}\s*\d{1,2}\s*-\s*[A-Z]{3}\s*\d{1,2})(.*?)Total\s*\$?(\d+[,.]?\d*\.?\d+)/gis,
-          /Trip\s*#?(\d+)[^\d]*([A-Z]{3}\s*\d{1,2}[^\d]*[A-Z]{3}\s*\d{1,2})(.*?)[\$]?(\d+[,.]?\d*\.?\d+)/gis,
-          /(\d{4,8})\s*([A-Z]{3}.*?[A-Z]{3}\s*\d{1,2})(.*?)(\d+\.\d{2})/gis
+          /(\d{6,8}):\s*([A-Z]{3}\s+\d{1,2}\s*-\s*[A-Z]{3}\s*\d{1,2})([\s\S]*?)Total\s*\$?([-\d.,]+)/gis
         ];
 
         let trips = [];
@@ -285,7 +307,6 @@
         }
 
         const tripData = [];
-
         if (trips.length === 0) {
           tripTable.innerHTML = '<tr><td colspan="4" class="p-6 text-center text-gray-500">No trip data found. The PDF format may not be supported.</td></tr>';
         } else {
@@ -299,10 +320,10 @@
               amount: amount,
               details: trip[3].trim().replace(/\s+/g, ' ').substring(0, 100)
             });
-            
+
             tableHTML += '<tr class="' + (i % 2 === 0 ? 'bg-gray-50' : 'bg-white') + '">';
             tableHTML += '<td class="p-3 whitespace-nowrap font-mono">' + trip[1] + '</td>';
-            tableHTML += '<td class="p-3 whitespace-nowrap">' + trip[2].replace(/\s+/g, ' ').trim() + '</td>';
+            tableHTML += '<td class="p-3 whitespace-nowrap">' + trip[2] + '</td>';
             tableHTML += '<td class="p-3 whitespace-nowrap font-semibold text-green-600">$' + amount.toFixed(2) + '</td>';
             tableHTML += '<td class="p-3 max-w-xs truncate">' + trip[3].trim().replace(/\s+/g, ' ').substring(0, 50) + '</td>';
             tableHTML += '</tr>';
@@ -311,15 +332,17 @@
         }
 
         renderChart(tripData);
-        
+
         settlementData = {
           summary: {
             netEarnings: netEarnings,
             grossEarnings: grossEarnings,
+            nonTaxable: nonTaxable,
             miles: miles,
             reimbursements: reimbursements,
             ratePerMile: ratePerMile,
-            deductions: deductions
+            deductions: totalDeductions,
+            taxes: totalTaxes
           },
           trips: tripData
         };
@@ -341,7 +364,7 @@
       }
 
       const ctx = document.getElementById('earningsChart').getContext('2d');
-      
+
       if (chartInstance) {
         chartInstance.destroy();
       }
@@ -373,9 +396,7 @@
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-              legend: {
-                display: false
-              },
+              legend: { display: false },
               tooltip: {
                 callbacks: {
                   label: function(context) {
@@ -423,16 +444,19 @@
 
         csvRows.push('');
         csvRows.push('Summary');
-        if (settlementData.summary.netEarnings) csvRows.push('Net Earnings,' + settlementData.summary.netEarnings.toFixed(2));
-        if (settlementData.summary.grossEarnings) csvRows.push('Gross Earnings,' + settlementData.summary.grossEarnings.toFixed(2));
-        if (settlementData.summary.miles) csvRows.push('Miles,' + settlementData.summary.miles);
-        if (settlementData.summary.reimbursements) csvRows.push('Reimbursements,' + settlementData.summary.reimbursements.toFixed(2));
+        if (settlementData.summary.netEarnings !== null) csvRows.push('Net Earnings,' + settlementData.summary.netEarnings.toFixed(2));
+        if (settlementData.summary.grossEarnings !== null) csvRows.push('Gross Earnings,' + settlementData.summary.grossEarnings.toFixed(2));
+        if (settlementData.summary.nonTaxable !== null) csvRows.push('Non-Taxable Per Diem,' + settlementData.summary.nonTaxable.toFixed(2));
+        if (settlementData.summary.miles !== null) csvRows.push('Miles,' + settlementData.summary.miles);
+        if (settlementData.summary.reimbursements !== null) csvRows.push('Reimbursements,' + settlementData.summary.reimbursements.toFixed(2));
+        if (settlementData.summary.deductions !== null) csvRows.push('Total Deductions,' + settlementData.summary.deductions.toFixed(2));
+        if (settlementData.summary.taxes !== null) csvRows.push('Total Taxes,' + settlementData.summary.taxes.toFixed(2));
 
         const csv = csvRows.join('\n');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const fileName = 'settlement_' + new Date().toISOString().split('T')[0] + '.csv';
         saveAs(blob, fileName);
-        
+
         showMessage('CSV exported successfully!', 'success');
       } catch (error) {
         console.error('Error exporting CSV:', error);
